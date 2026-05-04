@@ -20,6 +20,7 @@ import org.keycloak.services.ErrorResponse;
 import org.keycloak.services.cors.Cors;
 import org.keycloak.services.managers.AppAuthManager;
 import org.keycloak.services.managers.AuthenticationManager;
+import org.keycloak.services.managers.BruteForceProtector;
 
 import java.util.Map;
 
@@ -206,10 +207,15 @@ public class UserPasskeyResource {
             return requestValidation;
         }
 
-        String requestCredentialId = webAuthnService().resolveCredentialId(request);
-        if (requestCredentialId == null) {
+        String requestCredentialId = request.getCredentialId();
+        if (requestCredentialId == null || requestCredentialId.isBlank()) {
             logPasskeyLoginError(null, "missing_credential_id", null);
-            return buildErrorResponse(Response.Status.BAD_REQUEST, "credentialId or rawId is required");
+            return buildErrorResponse(Response.Status.BAD_REQUEST, "credentialId is required");
+        }
+
+        if (request.getUserHandle() == null || request.getUserHandle().isBlank()) {
+            logPasskeyLoginError(null, "missing_user_handle", requestCredentialId);
+            return buildErrorResponse(Response.Status.BAD_REQUEST, "userHandle is required");
         }
 
         Response challengeValidation = validateChallenge(challengeService(), client, request.getChallenge());
@@ -218,10 +224,16 @@ public class UserPasskeyResource {
             return challengeValidation;
         }
 
-        UserModel user = webAuthnService().findUserByCredentialId(realm, request, requestCredentialId);
+        UserModel user = webAuthnService().findUserByUserHandle(realm, request.getUserHandle());
         if (user == null) {
-            logPasskeyLoginError(null, "user_not_found_for_credential", requestCredentialId);
-            return buildErrorResponse(Response.Status.NOT_FOUND, "User not found for credential");
+            logPasskeyLoginError(null, "user_not_found_for_user_handle", requestCredentialId);
+            return buildErrorResponse(Response.Status.NOT_FOUND, "User not found for userHandle");
+        }
+
+        String userAuthenticationBlockReason = userAuthenticationBlockReason(realm, user);
+        if (userAuthenticationBlockReason != null) {
+            logPasskeyLoginError(user, userAuthenticationBlockReason, requestCredentialId);
+            return buildErrorResponse(Response.Status.UNAUTHORIZED, "Invalid passkey");
         }
 
         if (!webAuthnService().hasPasskeyCredential(user, requestCredentialId)) {
@@ -406,6 +418,25 @@ public class UserPasskeyResource {
             return null;
         }
         return buildErrorResponse(Response.Status.UNAUTHORIZED, "Invalid or expired challenge");
+    }
+
+    private String userAuthenticationBlockReason(RealmModel realm, UserModel user) {
+        if (user == null || !user.isEnabled()) {
+            return "user_disabled";
+        }
+
+        BruteForceProtector bruteForceProtector = session().getProvider(BruteForceProtector.class);
+        if (bruteForceProtector == null) {
+            return null;
+        }
+
+        if (bruteForceProtector.isPermanentlyLockedOut(session(), realm, user)) {
+            return "user_permanently_locked_out";
+        }
+        if (bruteForceProtector.isTemporarilyDisabled(session(), realm, user)) {
+            return "user_temporarily_disabled";
+        }
+        return null;
     }
 
     private Response completeBrowserFlowLogin(UserModel user, RealmModel realm, ClientModel client) {

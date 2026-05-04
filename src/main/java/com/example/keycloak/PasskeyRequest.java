@@ -11,8 +11,6 @@ public class PasskeyRequest {
 
     private String credentialId;
 
-    private String rawId;
-
     private String userHandle;
 
     private String attestationObject;

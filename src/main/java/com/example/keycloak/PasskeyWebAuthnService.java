@@ -25,22 +25,17 @@ import org.keycloak.models.WebAuthnPolicy;
 import org.keycloak.models.credential.WebAuthnCredentialModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.protocol.oidc.utils.RedirectUtils;
-import org.jboss.logging.Logger;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 final class PasskeyWebAuthnService {
 
-    private static final Logger logger = Logger.getLogger(PasskeyWebAuthnService.class);
     private static final String PASSKEY_TYPE = WebAuthnCredentialModel.TYPE_PASSWORDLESS;
-    private static final String CREDENTIAL_USER_ATTR = "passkey-credential-id";
     private static final String HEADER_ORIGIN = "Origin";
     private static final String ANY_ORIGIN = "*";
     private static final String WEB_ORIGIN_USE_REDIRECTS = "+";
@@ -57,51 +52,23 @@ final class PasskeyWebAuthnService {
     }
 
     /**
-     * Resolves credential identifier from request fields.
-     *
-     * @param request passkey request payload
-     * @return credential id, preferring {@code credentialId} over {@code rawId}
-     */
-    String resolveCredentialId(PasskeyRequest request) {
-        String credentialId = request.getCredentialId();
-        if (credentialId != null && !credentialId.isBlank()) {
-            return credentialId;
-        }
-        String rawId = request.getRawId();
-        return (rawId == null || rawId.isBlank()) ? null : rawId;
-    }
-
-    /**
-     * Finds a user for an authentication request.
-     * <p>
-     * Prefer WebAuthn's userHandle because LDAP-backed users may be read-only and cannot store
-     * the local helper attribute. The attribute and full credential scan are compatibility fallbacks.
+     * Finds a user for an authentication request from the WebAuthn userHandle.
      *
      * @param realm current realm
-     * @param request passkey request payload
-     * @param credentialId credential id from client
+     * @param userHandle base64url-encoded WebAuthn userHandle
      * @return matching user or {@code null} when none exists
      */
-    UserModel findUserByCredentialId(RealmModel realm, PasskeyRequest request, String credentialId) {
-        UserModel userFromHandle = findUserByUserHandle(realm, request == null ? null : request.getUserHandle());
-        if (userFromHandle != null) {
-            return userFromHandle;
-        }
-
-        String normalizedCredentialId = normalizeCredentialId(credentialId);
-        if (normalizedCredentialId == null) {
+    UserModel findUserByUserHandle(RealmModel realm, String userHandle) {
+        if (userHandle == null || userHandle.isBlank()) {
             return null;
         }
 
-        UserModel userFromAttribute = session.users()
-                .searchForUserByUserAttributeStream(realm, CREDENTIAL_USER_ATTR, normalizedCredentialId)
-                .findFirst()
-                .orElse(null);
-        if (userFromAttribute != null) {
-            return userFromAttribute;
+        try {
+            String userId = new String(Base64Url.decode(userHandle), StandardCharsets.UTF_8);
+            return userId.isBlank() ? null : session.users().getUserById(realm, userId);
+        } catch (RuntimeException e) {
+            return null;
         }
-
-        return findUserByStoredCredential(realm, credentialId);
     }
 
     /**
@@ -153,10 +120,6 @@ final class PasskeyWebAuthnService {
         CredentialModel storedCredentialModel = provider.createCredential(realm, user, credentialModel);
         if (storedCredentialModel == null) {
             throw new IllegalStateException("Failed to store passkey credential");
-        }
-        WebAuthnCredentialModel storedCredential = WebAuthnCredentialModel.createFromCredentialModel(storedCredentialModel);
-        if (storedCredential.getWebAuthnCredentialData() != null) {
-            storeCredentialUserMapping(user, storedCredential.getWebAuthnCredentialData().getCredentialId());
         }
     }
 
@@ -386,17 +349,6 @@ final class PasskeyWebAuthnService {
     }
 
     /**
-     * Converts arbitrary credential id input into canonical base64url form.
-     */
-    private String normalizeCredentialId(String credentialId) {
-        byte[] credentialBytes = credentialIdToBytes(credentialId);
-        if (credentialBytes.length == 0) {
-            return null;
-        }
-        return Base64Url.encode(credentialBytes);
-    }
-
-    /**
      * Decodes credential id into bytes, returning empty bytes on invalid input.
      */
     private byte[] credentialIdToBytes(String credentialId) {
@@ -412,49 +364,6 @@ final class PasskeyWebAuthnService {
     }
 
     /**
-     * Resolves a user from the WebAuthn userHandle. Keycloak's native passwordless flow uses the
-     * user id, while older sample clients in this project used the username.
-     */
-    private UserModel findUserByUserHandle(RealmModel realm, String userHandle) {
-        String decodedUserHandle = decodeUserHandle(userHandle);
-        if (decodedUserHandle == null) {
-            return null;
-        }
-
-        UserModel user = session.users().getUserById(realm, decodedUserHandle);
-        if (user != null) {
-            return user;
-        }
-        return session.users().getUserByUsername(realm, decodedUserHandle);
-    }
-
-    private String decodeUserHandle(String userHandle) {
-        if (userHandle == null || userHandle.isBlank()) {
-            return null;
-        }
-
-        try {
-            String decoded = new String(Base64Url.decode(userHandle), StandardCharsets.UTF_8);
-            return decoded.isBlank() ? null : decoded;
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
-
-    private UserModel findUserByStoredCredential(RealmModel realm, String credentialId) {
-        try {
-            return session.users()
-                    .searchForUserStream(realm, Map.of(), null, null)
-                    .filter(user -> hasPasskeyCredential(user, credentialId))
-                    .findFirst()
-                    .orElse(null);
-        } catch (RuntimeException e) {
-            logger.warn("Passkey user lookup by stored credential failed: " + e.getMessage(), e);
-            return null;
-        }
-    }
-
-    /**
      * Returns the current realm or throws when request context has none.
      */
     private RealmModel requireRealm() {
@@ -465,23 +374,4 @@ final class PasskeyWebAuthnService {
         return realm;
     }
 
-    /**
-     * Persists credential-to-user mapping used by direct credential-id lookup.
-     */
-    private void storeCredentialUserMapping(UserModel user, String credentialId) {
-        String normalizedCredentialId = normalizeCredentialId(credentialId);
-        if (normalizedCredentialId == null) {
-            return;
-        }
-
-        List<String> values = new ArrayList<>(user.getAttributeStream(CREDENTIAL_USER_ATTR).toList());
-        if (!values.contains(normalizedCredentialId)) {
-            values.add(normalizedCredentialId);
-            try {
-                user.setAttribute(CREDENTIAL_USER_ATTR, values);
-            } catch (RuntimeException e) {
-                logger.warn("Could not store passkey credential mapping on user attribute; falling back to userHandle-based lookup: " + e.getMessage(), e);
-            }
-        }
-    }
 }
