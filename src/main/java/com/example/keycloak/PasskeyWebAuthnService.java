@@ -19,6 +19,7 @@ import org.keycloak.credential.WebAuthnCredentialModelInput;
 import org.keycloak.credential.WebAuthnCredentialProvider;
 import org.keycloak.credential.WebAuthnPasswordlessCredentialProviderFactory;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.WebAuthnPolicy;
@@ -32,10 +33,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 final class PasskeyWebAuthnService {
 
     private static final String PASSKEY_TYPE = WebAuthnCredentialModel.TYPE_PASSWORDLESS;
+    private static final int MAX_CREDENTIAL_LABEL_LENGTH = 120;
+    private static final String DEFAULT_CREDENTIAL_LABEL = "Passkey";
     private static final String HEADER_ORIGIN = "Origin";
     private static final String ANY_ORIGIN = "*";
     private static final String WEB_ORIGIN_USE_REDIRECTS = "+";
@@ -116,8 +120,21 @@ final class PasskeyWebAuthnService {
         RegistrationData registrationData = validateRegistration(registrationRequest, registrationParameters);
         WebAuthnCredentialProvider provider = getPasswordlessCredentialProvider();
         WebAuthnCredentialModelInput credentialInput = createCredentialInput(registrationData);
-        WebAuthnCredentialModel credentialModel = provider.getCredentialModelFromCredentialInput(credentialInput, user.getUsername());
-        CredentialModel storedCredentialModel = provider.createCredential(realm, user, credentialModel);
+        String credentialLabel = buildCredentialLabel(user, request);
+
+        CredentialModel storedCredentialModel = null;
+        for (int attempt = 0; attempt < 3 && storedCredentialModel == null; attempt++) {
+            WebAuthnCredentialModel credentialModel = provider.getCredentialModelFromCredentialInput(
+                    credentialInput,
+                    attempt == 0 ? credentialLabel : makeUniqueLabel(credentialLabel, existingCredentialLabels(user))
+            );
+            try {
+                storedCredentialModel = provider.createCredential(realm, user, credentialModel);
+            } catch (ModelDuplicateException duplicateException) {
+                // Retry once with a recalculated unique label in case concurrent writes happened.
+            }
+        }
+
         if (storedCredentialModel == null) {
             throw new IllegalStateException("Failed to store passkey credential");
         }
@@ -175,6 +192,65 @@ final class PasskeyWebAuthnService {
         credentialInput.setAttestationStatementFormat(registrationData.getAttestationObject().getFormat());
         credentialInput.setTransports(registrationData.getTransports());
         return credentialInput;
+    }
+
+    /**
+     * Builds a non-sensitive, unique-friendly passkey label for Keycloak credential storage.
+     */
+    private String buildCredentialLabel(UserModel user, PasskeyRequest request) {
+        String requestedDeviceName = normalizeDeviceName(request.getDeviceName());
+        String baseName = firstNonBlank(requestedDeviceName, DEFAULT_CREDENTIAL_LABEL);
+        return makeUniqueLabel(baseName, existingCredentialLabels(user));
+    }
+
+    private String normalizeDeviceName(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim().replaceAll("\\s+", " ");
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private Set<String> existingCredentialLabels(UserModel user) {
+        return user.credentialManager()
+                .getStoredCredentialsByTypeStream(PASSKEY_TYPE)
+                .map(CredentialModel::getUserLabel)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .collect(Collectors.toSet());
+    }
+
+    private String makeUniqueLabel(String requestedLabel, Set<String> existingLabels) {
+        String normalizedBase = truncateLabel(requestedLabel);
+        if (!existingLabels.contains(normalizedBase)) {
+            return normalizedBase;
+        }
+
+        for (int counter = 2; counter < 10_000; counter++) {
+            String candidate = truncateLabel(normalizedBase + " (" + counter + ")");
+            if (!existingLabels.contains(candidate)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Unable to find a unique passkey label");
+    }
+
+    private String truncateLabel(String label) {
+        String normalized = firstNonBlank(normalizeDeviceName(label), DEFAULT_CREDENTIAL_LABEL);
+        if (normalized.length() <= MAX_CREDENTIAL_LABEL_LENGTH) {
+            return normalized;
+        }
+        return normalized.substring(0, MAX_CREDENTIAL_LABEL_LENGTH);
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /**

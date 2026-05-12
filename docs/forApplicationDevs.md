@@ -121,6 +121,21 @@ const credential = await navigator.credentials.create({
   }
 });
 
+const platform =
+  navigator.userAgentData?.platform ||
+  navigator.platform ||
+  'Unknown Platform';
+
+const browser =
+  navigator.userAgentData?.brands?.find((b) => b.brand && b.brand !== 'Not_A Brand')?.brand ||
+  (navigator.userAgent.includes('Firefox') ? 'Firefox' :
+   navigator.userAgent.includes('Edg') ? 'Edge' :
+   navigator.userAgent.includes('Chrome') ? 'Chrome' :
+   navigator.userAgent.includes('Safari') ? 'Safari' :
+   'Unknown Browser');
+
+const deviceName = `${platform} - ${browser}`;
+
 await fetch(passkeyUrl('save'), {
   method: 'POST',
   credentials: 'include',
@@ -129,6 +144,7 @@ await fetch(passkeyUrl('save'), {
     Authorization: `Bearer ${keycloak.token}`
   },
   body: JSON.stringify({
+    deviceName,
     credentialId: toBase64Url(credential.rawId),
     clientDataJSON: toBase64Url(credential.response.clientDataJSON),
     attestationObject: toBase64Url(credential.response.attestationObject),
