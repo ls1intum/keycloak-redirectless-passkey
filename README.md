@@ -21,6 +21,7 @@ After admin setup is complete, app developers integrate the client flow:
 - Serve a silent check-sso callback page (for example `/silent-check-sso.html`) and configure
   `silentCheckSsoRedirectUri`.
 - Initialize Keycloak with `onLoad: 'check-sso'` (typically with `silentCheckSsoFallback: false`).
+- Optionally call `GET /realms/{realm}/passkey/{clientId}/health` to confirm extension availability.
 - Call `GET /realms/{realm}/passkey/{clientId}/challenge` before registration/authentication.
 - Register discoverable passkeys with the Keycloak user id (`tokenParsed.sub`) as WebAuthn `user.id`.
 - Register via `POST /realms/{realm}/passkey/{clientId}/save` with `Authorization: Bearer <token>`,
@@ -40,6 +41,7 @@ This extension adds passkey APIs to Keycloak at:
 
 New endpoints (required client identification):
 
+- `GET /{clientId}/health`
 - `GET /{clientId}/challenge`
 - `POST /{clientId}/save`
 - `POST /{clientId}/authenticate`
@@ -48,10 +50,11 @@ New endpoints (required client identification):
 
 The plugin is a Keycloak `RealmResourceProvider` mounted at `/realms/{realm}/passkey/*`.
 
-1. `GET /{clientId}/challenge` creates a short-lived, single-use challenge in Keycloak server storage.
-2. `POST /{clientId}/save` stores in Keycloak a verified passkey for the currently logged-in user (resolved from the
+1. `GET /{clientId}/health` returns extension availability for the provided OIDC client.
+2. `GET /{clientId}/challenge` creates a short-lived, single-use challenge in Keycloak server storage.
+3. `POST /{clientId}/save` stores in Keycloak a verified passkey for the currently logged-in user (resolved from the
    bearer access token).
-3. `POST /{clientId}/authenticate` verifies the WebAuthn assertion (passkey), completes the standard Keycloak browser
+4. `POST /{clientId}/authenticate` verifies the WebAuthn assertion (passkey), completes the standard Keycloak browser
    login flow (including required actions), sets the Keycloak login cookie, and returns `204 No Content`.
 
 How `check-sso` uses that session:

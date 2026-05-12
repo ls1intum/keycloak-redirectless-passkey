@@ -47,4 +47,5 @@ After this setup, the extension is available under:
 /realms/{realm}/passkey/{clientId}/challenge
 /realms/{realm}/passkey/{clientId}/save
 /realms/{realm}/passkey/{clientId}/authenticate
+/realms/{realm}/passkey/{clientId}/health
 ```

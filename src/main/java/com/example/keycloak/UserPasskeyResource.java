@@ -75,6 +75,37 @@ public class UserPasskeyResource {
     }
 
     /**
+     * Reports whether the passkey extension is reachable for the requested OIDC client.
+     *
+     * @return JSON health payload for extension availability checks
+     */
+    @GET
+    @Path("{clientId}/health")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getHealth(@PathParam("clientId") String pathClientId) {
+        RealmModel realm = session().getContext().getRealm();
+        if (realm == null) {
+            return handleServerConfigurationError("Realm context unavailable for passkey health check", new IllegalStateException("Realm context is unavailable"));
+        }
+
+        String requestedClientId = sanitizePathClientId(pathClientId);
+        if (requestedClientId == null) {
+            return buildErrorResponse(Response.Status.BAD_REQUEST, "clientId path parameter is required");
+        }
+
+        ClientModel client = resolveClientForPath(realm, requestedClientId);
+        if (client == null) {
+            return buildErrorResponse(Response.Status.BAD_REQUEST, unresolvedClientMessage());
+        }
+
+        return jsonOk(Map.of(
+                "status", "UP",
+                "available", true,
+                "extension", UserPasskeyProviderFactory.ID
+        ));
+    }
+
+    /**
      * Issues a short-lived challenge used by registration and authentication requests.
      *
      * @return JSON object containing a base64url challenge value

@@ -55,6 +55,14 @@ function passkeyUrl(path) {
 Always fetch a fresh challenge before registering or authenticating:
 
 ```js
+async function checkPasskeyExtensionHealth() {
+  const res = await fetch(passkeyUrl('health'), { credentials: 'include' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.available !== true) {
+    throw new Error(body.error || 'Passkey extension is not available');
+  }
+}
+
 async function getChallenge() {
   const res = await fetch(passkeyUrl('challenge'), { credentials: 'include' });
   const body = await res.json().catch(() => ({}));
