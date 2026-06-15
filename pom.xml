@@ -1,13 +1,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>de.tum.cit.aet</groupId>
-  <artifactId>custom-passkey</artifactId>
-  <version>1.3.1</version>
+  <artifactId>keycloak-redirectless-passkey</artifactId>
+  <version>1.4.0</version>
   <packaging>jar</packaging>
 
-  <name>keycloak-redirectless-passkey</name>
+  <name>Keycloak Redirectless Passkey</name>
   <description>Keycloak extension that adds redirectless passkey flows.</description>
   <url>https://github.com/ls1intum/keycloak-redirectless-passkey</url>
   <licenses>
@@ -33,7 +33,7 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <keycloak.version>26.5.0</keycloak.version>
+    <keycloak.version>26.6.3</keycloak.version>
   </properties>
 
   <dependencies>
@@ -56,26 +56,10 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>org.jboss.resteasy</groupId>
-      <artifactId>resteasy-core-spi</artifactId>
-      <version>6.2.11.Final</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
       <version>1.18.38</version>
       <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-core</artifactId>
-      <version>2.18.6</version>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-      <version>2.18.6</version>
     </dependency>
   </dependencies>
   <build>
@@ -102,6 +86,10 @@
         <extensions>true</extensions>
         <configuration>
           <publishingServerId>central</publishingServerId>
+          <autoPublish>false</autoPublish>
+          <centralBaseUrl>https://central.sonatype.com</centralBaseUrl>
+          <centralSnapshotsUrl>https://central.sonatype.com/repository/maven-snapshots/</centralSnapshotsUrl>
+          <deploymentName>Keycloak Redirectless Passkey</deploymentName>
         </configuration>
       </plugin>
       <plugin>
@@ -141,6 +129,12 @@
             <goals>
               <goal>sign</goal>
             </goals>
+            <configuration>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
           </execution>
         </executions>
       </plugin>

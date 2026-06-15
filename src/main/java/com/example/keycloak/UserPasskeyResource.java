@@ -433,7 +433,7 @@ public class UserPasskeyResource {
             cors.preflight();
         }
 
-        cors.allowedOrigins(session(), corsClient);
+        cors.checkAllowedOrigins(session(), corsClient);
         cors.add();
     }
 
